@@ -54,7 +54,6 @@ pub fn send_pings(
     results_sender: Sender<PingResult>,
     thread_rx: Arc<Mutex<Receiver<PingResult>>>,
     tx: Arc<Mutex<TransportSender>>,
-    txv6: Arc<Mutex<TransportSender>>,
     addrs: Arc<Mutex<BTreeMap<IpAddr, bool>>>,
     max_rtt: Arc<Duration>,
 ) {
@@ -63,7 +62,8 @@ pub fn send_pings(
             match if addr.is_ipv4() {
                 send_echo(&mut tx.lock().unwrap(), *addr, size)
             } else if addr.is_ipv6() {
-                send_echov6(&mut txv6.lock().unwrap(), *addr, size)
+                error!("Not supporting ipv6");
+                Ok(0)
             } else {
                 Ok(0)
             } {

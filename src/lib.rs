@@ -51,12 +51,6 @@ pub struct Pinger {
     // receiver end of libpnet icmp v4 transport channel
     rx: Arc<Mutex<TransportReceiver>>,
 
-    // sender end of libpnet icmp v6 transport channel
-    txv6: Arc<Mutex<TransportSender>>,
-
-    // receiver end of libpnet icmp v6 transport channel
-    rxv6: Arc<Mutex<TransportReceiver>>,
-
     // sender for internal result passing beween threads
     thread_tx: Sender<PingResult>,
 
@@ -82,12 +76,6 @@ impl Pinger {
             Err(e) => return Err(e.to_string()),
         };
 
-        let protocolv6 = Layer4(Ipv6(IpNextHeaderProtocols::Icmpv6));
-        let (txv6, rxv6) = match transport_channel(4096, protocolv6) {
-            Ok((txv6, rxv6)) => (txv6, rxv6),
-            Err(e) => return Err(e.to_string()),
-        };
-
         let (thread_tx, thread_rx) = channel();
 
         let mut pinger = Pinger {
@@ -97,8 +85,6 @@ impl Pinger {
             results_sender: sender,
             tx: Arc::new(Mutex::new(tx)),
             rx: Arc::new(Mutex::new(rx)),
-            txv6: Arc::new(Mutex::new(txv6)),
-            rxv6: Arc::new(Mutex::new(rxv6)),
             thread_rx: Arc::new(Mutex::new(thread_rx)),
             thread_tx,
             timer: Arc::new(RwLock::new(Instant::now())),
@@ -163,7 +149,6 @@ impl Pinger {
     fn run_pings(&self, run_once: bool) {
         let thread_rx = self.thread_rx.clone();
         let tx = self.tx.clone();
-        let txv6 = self.txv6.clone();
         let results_sender = self.results_sender.clone();
         let stop = self.stop.clone();
         let addrs = self.addrs.clone();
@@ -189,7 +174,6 @@ impl Pinger {
                 results_sender,
                 thread_rx,
                 tx,
-                txv6,
                 addrs,
                 max_rtt,
             );
@@ -202,7 +186,6 @@ impl Pinger {
                     results_sender,
                     thread_rx,
                     tx,
-                    txv6,
                     addrs,
                     max_rtt,
                 );
@@ -245,48 +228,6 @@ impl Pinger {
                                 "ICMP type other than reply (0) received from {:?}: {:?}",
                                 addr,
                                 packet.get_icmp_type()
-                            );
-                        }
-                    }
-                    Err(e) => {
-                        error!("An error occurred while reading: {}", e);
-                    }
-                }
-            }
-        });
-
-        // setup ipv6 listener
-        let thread_txv6 = self.thread_tx.clone();
-        let rxv6 = self.rxv6.clone();
-        let timerv6 = self.timer.clone();
-        let stopv6 = self.stop.clone();
-
-        thread::spawn(move || {
-            let mut receiver = rxv6.lock().unwrap();
-            let mut iter = icmpv6_packet_iter(&mut receiver);
-            loop {
-                match iter.next() {
-                    Ok((packet, addr)) => {
-                        if packet.get_icmpv6_type() == icmpv6::Icmpv6Type::new(129) {
-                            let start_time = timerv6.read().unwrap();
-                            match thread_txv6.send(PingResult::Receive {
-                                addr: addr,
-                                rtt: Instant::now().duration_since(*start_time),
-                            }) {
-                                Ok(_) => {}
-                                Err(e) => {
-                                    if !*stopv6.lock().unwrap() {
-                                        error!("Error sending ping result on channel: {}", e)
-                                    } else {
-                                        return;
-                                    }
-                                }
-                            }
-                        } else {
-                            debug!(
-                                "ICMP type other than reply (129) received from {:?}: {:?}",
-                                addr,
-                                packet.get_icmpv6_type()
                             );
                         }
                     }
@@ -385,7 +326,7 @@ mod tests {
         // more comprehensive integration test
         match Pinger::new(None, None) {
             Ok((test_pinger, test_channel)) => {
-                let test_addrs = vec!["127.0.0.1", "7.7.7.7", "::1"];
+                let test_addrs = vec!["127.0.0.1", "7.7.7.7"];
                 for addr in test_addrs.iter() {
                     test_pinger.add_ipaddr(addr);
                 }
